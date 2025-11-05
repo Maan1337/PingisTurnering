@@ -30,22 +30,25 @@ namespace PingisTurnering
             CreateGfx();
         }
 
-        // Plan (pseudocode):
-        // 1. Keep existing layout computation for left side (matches).
-        // 2. Choose a desired leaderboard width and a small right margin.
-        // 3. Compute leaderboardX as right-aligned: ClientSize.Width - leaderboardWidth - rightMargin.
-        // 4. Ensure leaderboard does not overlap match panels: if computed leaderboardX is too small,
-        //    move it to at least (leftMargin + panelWidth + minimumGap).
-        // 5. Use leaderboardX in the rest of the leaderboard code so the leaderboard appears further right
-        //    (and will be flush to the right edge unless that would overlap the match panels).
+        // Modified CreateGfx method: increased vertical spacing between leaderboard player name labels by +5 pixels.
+        // Original spacing: (rowHeight + 4). New spacing: (rowHeight + 9) to prevent overlap.
         private void CreateGfx()
         {
+            // Plan:
+            // 1. Clear previously generated controls.
+            // 2. Build match panels laid out in columns/rows.
+            // 3. Build leaderboard to the right.
+            // 4. Create "New round" button positioned at bottom-right corner of the form (client area).
+            // 5. Anchor the button so it stays in the bottom-right on resize.
+
             // Remove previously generated controls (identified by Tag) so we don't duplicate on repeated calls
             for (var i = Controls.Count - 1; i >= 0; i--)
             {
                 var c = Controls[i];
                 if (c?.Tag is string s && s == "GeneratedGfx")
                 {
+                    AutoScroll = true;
+                    AutoScrollMinSize = new Size(1920, 1024);
                     Controls.RemoveAt(i);
                 }
             }
@@ -55,29 +58,36 @@ namespace PingisTurnering
             var round = _rounds[0];
 
             // Set the form to the requested size (client area)
-            ClientSize = new Size(1920, 1200);
+            ClientSize = new Size(1920, 1024);
 
             // Layout configuration
             var leftMargin = 10;
             var topMargin = 10;
-            var panelWidth = 420;        // keep horizontal usage small
+            var panelWidth = 420;
             var pointsWidth = 60;
             var rowHeight = 30;
-            var panelPadding = 30; //6
-            var panelVerticalSpacing = 32; //12
+            var panelPadding = 30;
+            var panelVerticalSpacing = 32;
+            var columnSpacing = 32;
 
-            var currentY = topMargin;
+            var panelHeight = panelPadding * 2 + rowHeight * 2 + 6;
+            int maxRowsPerColumn = 4;
+            int matchCount = round.Matches.Count;
+            int columns = (int)Math.Ceiling(matchCount / (double)maxRowsPerColumn);
 
-            for (var mIndex = 0; mIndex < round.Matches.Count; mIndex++)
+            for (var mIndex = 0; mIndex < matchCount; mIndex++)
             {
                 var match = round.Matches[mIndex];
 
-                // Panel height for two rows + padding
-                var panelHeight = panelPadding * 2 + rowHeight * 2 + 6;
+                int column = mIndex / maxRowsPerColumn;
+                int row = mIndex % maxRowsPerColumn;
+
+                int x = leftMargin + column * (panelWidth + columnSpacing);
+                int y = topMargin + row * (panelHeight + panelVerticalSpacing);
 
                 var panel = new Panel
                 {
-                    Location = new Point(leftMargin, currentY),
+                    Location = new Point(x, y),
                     Size = new Size(panelWidth, panelHeight),
                     BorderStyle = BorderStyle.FixedSingle,
                     Tag = "GeneratedGfx"
@@ -88,7 +98,6 @@ namespace PingisTurnering
                 {
                     var rowY = panelPadding + playerRow * (rowHeight + 4);
 
-                    // Name textbox (takes most of the panel width)
                     var nameBox = new TextBox
                     {
                         Location = new Point(6, rowY),
@@ -97,11 +106,9 @@ namespace PingisTurnering
                         Text = playerRow == 0 ? (match.Player1?.Name ?? string.Empty) : (match.Player2?.Name ?? string.Empty)
                     };
 
-                    // Capture variables for closure so handlers reference the correct match/playerRow
                     var capturedMatch = match;
                     var capturedPlayerRow = playerRow;
 
-                    // Update the underlying Player.Name when the user edits the text
                     nameBox.TextChanged += (s, e) =>
                     {
                         if (s is TextBox tb)
@@ -119,7 +126,6 @@ namespace PingisTurnering
                         }
                     };
 
-                    // Points textbox (small, to the right of the name)
                     var pointsBox = new TextBox
                     {
                         Location = new Point(panelWidth - pointsWidth - 6, rowY),
@@ -129,8 +135,6 @@ namespace PingisTurnering
                         TextAlign = HorizontalAlignment.Center
                     };
 
-                    // Update Match points when the user edits the points textbox.
-                    // Only update when the text parses to an int; ignore invalid/transient input.
                     pointsBox.TextChanged += (s, e) =>
                     {
                         if (s is TextBox tb)
@@ -146,7 +150,6 @@ namespace PingisTurnering
                                     capturedMatch.PointsPlayer2 = val;
                                 }
                             }
-                            // If parsing fails, do not modify existing stored points.
                         }
                     };
 
@@ -154,33 +157,30 @@ namespace PingisTurnering
                     panel.Controls.Add(pointsBox);
                 }
 
-                // Optional: add a small label showing "Match X" to clarify grouping (keeps horizontal space minimal)
                 var matchLabel = new Label
                 {
                     Text = $"Match {mIndex + 1}",
                     AutoSize = true,
-                    Location = new Point(8, panelHeight - 28), //-18
+                    Location = new Point(8, panelHeight - 28),
                     Tag = "GeneratedGfx"
                 };
                 panel.Controls.Add(matchLabel);
 
                 Controls.Add(panel);
-
-                currentY += panelHeight + panelVerticalSpacing;
             }
 
             // Leaderboard area on the right side
-            // Use right-alignment but ensure it doesn't overlap the left match panels.
             var leaderboardWidth = 360;
-            var rightMargin = 200; // margin from the right edge
-            var minimumGapAfterPanels = 40; // minimum gap between panels and leaderboard
+            var rightMargin = 200;
+            var minimumGapAfterPanels = 40;
 
-            var tentativeLeaderboardX = ClientSize.Width - leaderboardWidth - rightMargin;
-            var minLeaderboardX = leftMargin + panelWidth + minimumGapAfterPanels;
-            var leaderboardX = tentativeLeaderboardX < minLeaderboardX ? minLeaderboardX : tentativeLeaderboardX;
-            var leaderboardTop = topMargin;
+            // Compute rightmost X of match panels
+            int rightmostPanelX = leftMargin + (columns) * (panelWidth + columnSpacing) - columnSpacing;
+            int tentativeLeaderboardX = rightmostPanelX + minimumGapAfterPanels;
+            int maxLeaderboardX = ClientSize.Width - leaderboardWidth - rightMargin;
+            int leaderboardX = tentativeLeaderboardX > maxLeaderboardX ? maxLeaderboardX : tentativeLeaderboardX;
+            int leaderboardTop = topMargin;
 
-            // Fonts for header and items
             var headerFont = new Font("Segoe UI", 18, FontStyle.Bold);
             var itemFont = new Font("Segoe UI", 16, FontStyle.Bold);
 
@@ -194,21 +194,22 @@ namespace PingisTurnering
             };
             Controls.Add(headerLabel);
 
-            // Prepare sorted list of players by TotalPoints descending, then name
             var sorted = _players
                 .OrderByDescending(p => p.TotalPoints)
                 .ThenBy(p => p.Name)
                 .ToList();
 
-            // Start listing directly under the header
             var itemsTop = leaderboardTop + headerLabel.Height + 8;
             var nameColumnWidth = leaderboardWidth - 80;
             var pointsColumnWidth = 70;
 
+            // Increased spacing between each player name label (+5 pixels) to avoid overlap.
+            int leaderboardRowSpacing = rowHeight + 9;
+
             for (var i = 0; i < sorted.Count; i++)
             {
                 var p = sorted[i];
-                var y = itemsTop + i * (rowHeight + 4);
+                var y = itemsTop + i * leaderboardRowSpacing;
 
                 var nameLabel = new Label
                 {
@@ -235,14 +236,19 @@ namespace PingisTurnering
                 Controls.Add(pointsLabel);
             }
 
-            // Add "New round" button at the bottom-left corner
             var newRoundButton = new Button
             {
                 Text = "New round",
                 Tag = "GeneratedGfx",
                 Size = new Size(120, 30),
-                Location = new Point(leftMargin, ClientSize.Height - 78)
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right
             };
+
+            // Position at bottom-right corner (respecting margins)
+            newRoundButton.Location = new Point(
+                ClientSize.Width - newRoundButton.Width - leftMargin,
+                ClientSize.Height - newRoundButton.Height - topMargin
+            );
 
             newRoundButton.Click += (s, e) =>
             {
