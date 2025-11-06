@@ -1,13 +1,13 @@
 namespace PingisTurnering
 {
-    public partial class Form1 : Form
+    public partial class TabletennisMain : Form
     {
         private int _noOfPlayers = 14;
         private List<string> _initialPlayerNames = new();
         private List<Round> _rounds = new();
         private List<Player> _players = new();
 
-        public Form1()
+        public TabletennisMain()
         {
             InitializeComponent();
 
