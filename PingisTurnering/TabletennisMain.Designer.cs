@@ -1,6 +1,6 @@
 ﻿namespace PingisTurnering
 {
-    partial class Form1
+    partial class TabletennisMain
     {
         /// <summary>
         ///  Required designer variable.
@@ -30,13 +30,14 @@
         {
             SuspendLayout();
             // 
-            // Form1
+            // TabletennisMain
             // 
-            AutoScaleDimensions = new SizeF(10F, 25F);
+            AutoScaleDimensions = new SizeF(8F, 20F);
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(1719, 816);
-            Name = "Form1";
-            Text = "Form1";
+            ClientSize = new Size(1375, 653);
+            Margin = new Padding(2, 2, 2, 2);
+            Name = "TabletennisMain";
+            Text = "Table tennis tournament";
             ResumeLayout(false);
         }
 
