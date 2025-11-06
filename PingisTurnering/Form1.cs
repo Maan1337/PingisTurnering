@@ -11,7 +11,6 @@ namespace PingisTurnering
         {
             InitializeComponent();
 
-            // Show setup dialog before starting tournament
             using var setup = new PlayerSetupForm(_noOfPlayers, _initialPlayerNames);
             var dr = setup.ShowDialog(this);
             if (dr == DialogResult.OK)
@@ -30,18 +29,8 @@ namespace PingisTurnering
             CreateGfx();
         }
 
-        // Modified CreateGfx method: increased vertical spacing between leaderboard player name labels by +5 pixels.
-        // Original spacing: (rowHeight + 4). New spacing: (rowHeight + 9) to prevent overlap.
         private void CreateGfx()
         {
-            // Plan:
-            // 1. Clear previously generated controls.
-            // 2. Build match panels laid out in columns/rows.
-            // 3. Build leaderboard to the right.
-            // 4. Create "New round" button positioned at bottom-right corner of the form (client area).
-            // 5. Anchor the button so it stays in the bottom-right on resize.
-
-            // Remove previously generated controls (identified by Tag) so we don't duplicate on repeated calls
             for (var i = Controls.Count - 1; i >= 0; i--)
             {
                 var c = Controls[i];
@@ -56,11 +45,8 @@ namespace PingisTurnering
             if (_rounds.Count == 0) return;
 
             var round = _rounds[0];
-
-            // Set the form to the requested size (client area)
             ClientSize = new Size(1920, 1024);
 
-            // Layout configuration
             var leftMargin = 10;
             var topMargin = 10;
             var panelWidth = 420;
@@ -78,10 +64,8 @@ namespace PingisTurnering
             for (var mIndex = 0; mIndex < matchCount; mIndex++)
             {
                 var match = round.Matches[mIndex];
-
                 int column = mIndex / maxRowsPerColumn;
                 int row = mIndex % maxRowsPerColumn;
-
                 int x = leftMargin + column * (panelWidth + columnSpacing);
                 int y = topMargin + row * (panelHeight + panelVerticalSpacing);
 
@@ -93,7 +77,6 @@ namespace PingisTurnering
                     Tag = "GeneratedGfx"
                 };
 
-                // Create two rows (player 1 and player 2)
                 for (var playerRow = 0; playerRow < 2; playerRow++)
                 {
                     var rowY = panelPadding + playerRow * (rowHeight + 4);
@@ -142,13 +125,9 @@ namespace PingisTurnering
                             if (int.TryParse(tb.Text, out var val))
                             {
                                 if (capturedPlayerRow == 0)
-                                {
                                     capturedMatch.PointsPlayer1 = val;
-                                }
                                 else
-                                {
                                     capturedMatch.PointsPlayer2 = val;
-                                }
                             }
                         }
                     };
@@ -169,12 +148,10 @@ namespace PingisTurnering
                 Controls.Add(panel);
             }
 
-            // Leaderboard area on the right side
             var leaderboardWidth = 360;
             var rightMargin = 200;
             var minimumGapAfterPanels = 40;
 
-            // Compute rightmost X of match panels
             int rightmostPanelX = leftMargin + (columns) * (panelWidth + columnSpacing) - columnSpacing;
             int tentativeLeaderboardX = rightmostPanelX + minimumGapAfterPanels;
             int maxLeaderboardX = ClientSize.Width - leaderboardWidth - rightMargin;
@@ -202,8 +179,6 @@ namespace PingisTurnering
             var itemsTop = leaderboardTop + headerLabel.Height + 8;
             var nameColumnWidth = leaderboardWidth - 80;
             var pointsColumnWidth = 70;
-
-            // Increased spacing between each player name label (+5 pixels) to avoid overlap.
             int leaderboardRowSpacing = rowHeight + 9;
 
             for (var i = 0; i < sorted.Count; i++)
@@ -244,7 +219,6 @@ namespace PingisTurnering
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Right
             };
 
-            // Position at bottom-right corner (respecting margins)
             newRoundButton.Location = new Point(
                 ClientSize.Width - newRoundButton.Width - leftMargin,
                 ClientSize.Height - newRoundButton.Height - topMargin
@@ -261,34 +235,22 @@ namespace PingisTurnering
 
         private void CreateNextRound()
         {
-            // If there are no rounds, nothing to advance from
             if (_rounds.Count == 0) return;
 
             var prevRound = _rounds[0];
 
-            // Accumulate points from the previous round into each Player.TotalPoints
             foreach (var match in prevRound.Matches)
             {
                 if (match.Player1 != null)
-                {
                     match.Player1.TotalPoints += match.PointsPlayer1;
-                }
                 if (match.Player2 != null)
-                {
                     match.Player2.TotalPoints += match.PointsPlayer2;
-                }
             }
 
-            // Use the master player list so every player participates in the next round
             var participants = new List<Player>(_players);
-
-            // If odd number of participants, add a BYE so pairing is complete
             if (participants.Count % 2 == 1)
-            {
                 participants.Add(new Player("BYE", 0));
-            }
 
-            // Build set of previously played unordered pairs (minId:maxId)
             var playedPairs = new HashSet<string>();
             foreach (var round in _rounds)
             {
@@ -302,7 +264,6 @@ namespace PingisTurnering
                 }
             }
 
-            // Try to generate pairings that avoid repeats
             bool TryGeneratePairings(List<Player> list, HashSet<string> played, out List<Match> result)
             {
                 result = null!;
@@ -311,19 +272,15 @@ namespace PingisTurnering
 
                 for (var attempt = 0; attempt < maxAttempts; attempt++)
                 {
-                    // Shuffle in-place (Fisher-Yates)
                     for (var i = list.Count - 1; i > 0; i--)
                     {
                         var j = rnd.Next(i + 1);
-                        var tmp = list[i];
-                        list[i] = list[j];
-                        list[j] = tmp;
+                        (list[i], list[j]) = (list[j], list[i]);
                     }
 
                     var ok = true;
                     var matches = new List<Match>();
 
-                    // Greedy pairing with local swaps when encountering a repeat
                     for (var i = 0; i < list.Count; i += 2)
                     {
                         var p1 = list[i];
@@ -336,7 +293,6 @@ namespace PingisTurnering
                             continue;
                         }
 
-                        // Try to find a later partner that hasn't played p1
                         var found = false;
                         for (var k = i + 2; k < list.Count; k++)
                         {
@@ -344,12 +300,7 @@ namespace PingisTurnering
                             var candidateKey = p1.Id < candidate.Id ? $"{p1.Id}:{candidate.Id}" : $"{candidate.Id}:{p1.Id}";
                             if (!played.Contains(candidateKey))
                             {
-                                // Swap candidate into position i+1
-                                var tmp = list[i + 1];
-                                list[i + 1] = list[k];
-                                list[k] = tmp;
-
-                                // Accept the new pair
+                                (list[i + 1], list[k]) = (list[k], list[i + 1]);
                                 matches.Add(new Match(p1, list[i + 1]));
                                 found = true;
                                 break;
@@ -370,110 +321,63 @@ namespace PingisTurnering
                     }
                 }
 
-                // Failed to find conflict-free pairings within attempts
                 return false;
             }
 
-            // Make a working copy for the pairing attempts
             var working = new List<Player>(participants);
             if (!TryGeneratePairings(working, playedPairs, out var nextMatches))
             {
-                // Fallback: sequential pairing if we couldn't avoid repeats
                 nextMatches = new List<Match>();
                 for (var i = 0; i < participants.Count; i += 2)
-                {
-                    var p1 = participants[i];
-                    var p2 = participants[i + 1];
-                    nextMatches.Add(new Match(p1, p2));
-                }
+                    nextMatches.Add(new Match(participants[i], participants[i + 1]));
             }
 
             var nextRound = new Round(nextMatches);
-
-            // Insert at front so CreateGfx continues to display index 0 as "current"
             _rounds.Insert(0, nextRound);
         }
 
-        // Plan (pseudocode):
-        // 1. Make a local copy of the _players list so we don't modify the original ordering.
-        // 2. Shuffle the local copy using Fisher-Yates to produce random pairings.
-        // 3. If the number of players is odd, append a dummy "BYE" player so everyone is in a match.
-        //    - The BYE player ensures every real player is placed into exactly one match.
-        // 4. Iterate the shuffled list two-by-two and create Match objects for each adjacent pair.
-        // 5. Create a Round from the list of matches and add it to _rounds.
-        // 6. (Invariant) No Player instance from the original list will appear in more than one match
-        //    because the shuffle + linear pairing uses each element exactly once.
         private void CreateStartRound()
         {
-            // Copy players to avoid mutating the original list
             var players = new List<Player>(_players);
-
-            // Shuffle using Fisher-Yates
             var rnd = new Random();
             for (var i = players.Count - 1; i > 0; i--)
             {
                 var j = rnd.Next(i + 1);
-                var tmp = players[i];
-                players[i] = players[j];
-                players[j] = tmp;
+                (players[i], players[j]) = (players[j], players[i]);
             }
 
-            // If odd number of players, add a BYE player so everyone is in a match
             if (players.Count % 2 == 1)
-            {
                 players.Add(new Player("BYE", 0));
-            }
 
-            // Pair sequentially to create matches
             var matches = new List<Match>();
             for (var i = 0; i < players.Count; i += 2)
-            {
-                var p1 = players[i];
-                var p2 = players[i + 1];
-                matches.Add(new Match(p1, p2));
-            }
+                matches.Add(new Match(players[i], players[i + 1]));
 
-            // Create and store the round
-            var round = new Round(matches);
-            _rounds.Add(round);
+            _rounds.Add(new Round(matches));
         }
 
         private void CreatePlayers()
         {
             _players.Clear();
 
-            // Use provided initial names if any were entered in the setup dialog.
             if (_initialPlayerNames != null && _initialPlayerNames.Count > 0)
             {
-                // Take up to _noOfPlayers names, trim whitespace, ignore empty lines.
                 var names = _initialPlayerNames
                     .Select(n => n?.Trim() ?? string.Empty)
                     .Where(n => !string.IsNullOrEmpty(n))
                     .Take(_noOfPlayers)
                     .ToList();
 
-                // If fewer names than requested count, fill remaining with numbered defaults.
                 for (var i = 0; i < _noOfPlayers; i++)
                 {
-                    string name;
-                    if (i < names.Count)
-                    {
-                        name = names[i];
-                    }
-                    else
-                    {
-                        name = (i + 1).ToString();
-                    }
+                    var name = i < names.Count ? names[i] : (i + 1).ToString();
                     _players.Add(new Player(name, 0));
                 }
             }
             else
             {
-                // Original behavior: create numbered players 1..N
                 for (var i = 0; i < _noOfPlayers; i++)
-                {
                     _players.Add(new Player((i + 1).ToString(), 0));
-                }
             }
         }
     }
@@ -481,12 +385,9 @@ namespace PingisTurnering
     public class Player
     {
         private static int _nextId = 0;
-
         public int Id { get; }
         public string Name { get; set; }
         public int Rating { get; set; }
-
-        // Accumulated points across rounds
         public int TotalPoints { get; set; }
 
         public Player(string name, int rating)
@@ -523,10 +424,7 @@ namespace PingisTurnering
     public class Round
     {
         public List<Match> Matches { get; set; }
-        public Round(List<Match> matches)
-        {
-            Matches = matches;
-        }
+        public Round(List<Match> matches) => Matches = matches;
     }
     // Simple runtime-built form to configure number of players and provide a list of names (one per line).
     public class PlayerSetupForm : Form
@@ -586,25 +484,20 @@ namespace PingisTurnering
             };
             Controls.Add(_txtNames);
 
-            // Prefill names if provided, otherwise fill with default numbered names
             if (initialNames != null)
-            {
                 _txtNames.Lines = initialNames.ToArray();
-            }
             else
             {
                 var lines = new List<string>();
                 for (var i = 0; i < initialNumberOfPlayers; i++)
-                {
                     lines.Add((i + 1).ToString());
-                }
                 _txtNames.Lines = lines.ToArray();
             }
 
             _btnOk = new Button
             {
                 Text = "OK",
-                DialogResult = DialogResult.OK,
+                // IMPORTANT: Do NOT set DialogResult here to allow validation to keep form open.
                 Size = new Size(100, 30),
                 Location = new Point(ClientSize.Width - 220, ClientSize.Height - 44)
             };
@@ -626,23 +519,35 @@ namespace PingisTurnering
 
         private void BtnOk_Click(object? sender, EventArgs e)
         {
-            // Read and trim names
             var rawLines = _txtNames.Lines ?? Array.Empty<string>();
-            var names = rawLines.Select(l => l?.Trim() ?? string.Empty)
-                                .Where(s => !string.IsNullOrEmpty(s))
-                                .ToList();
+            var names = rawLines
+                .Select(l => l?.Trim() ?? string.Empty)
+                .Where(s => !string.IsNullOrEmpty(s))
+                .ToList();
 
-            NumberOfPlayers = (int)_nudPlayers.Value;
+            var requestedPlayers = (int)_nudPlayers.Value;
 
-            // If user provided more names than the chosen number, trim extras.
-            if (names.Count > NumberOfPlayers)
+            if (names.Count != requestedPlayers)
             {
-                names = names.Take(NumberOfPlayers).ToList();
+                // Ensure the form does NOT close after validation failure.
+                _btnOk.DialogResult = DialogResult.None;
+                this.DialogResult = DialogResult.None;
+
+                MessageBox.Show(
+                    this,
+                    $"The number of names entered ({names.Count}) must match the number of players ({requestedPlayers}).\nAdjust the player count or the list of names before continuing.",
+                    "Invalid player configuration",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error
+                );
+                return;
             }
 
+            NumberOfPlayers = requestedPlayers;
             PlayerNames = names;
 
-            DialogResult = DialogResult.OK;
+            // Set DialogResult only on success to close the form.
+            this.DialogResult = DialogResult.OK;
             Close();
         }
     }
