@@ -35,9 +35,9 @@
             AutoScaleDimensions = new SizeF(8F, 20F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(1375, 653);
-            Margin = new Padding(2, 2, 2, 2);
+            Margin = new Padding(2);
             Name = "TabletennisMain";
-            Text = "Table tennis tournament";
+            Text = "Bordtennisturnering";
             ResumeLayout(false);
         }
 

@@ -1,3 +1,5 @@
+using static PingisTurnering.TabletennisMain;
+
 namespace PingisTurnering
 {
     public partial class TabletennisMain : Form
@@ -6,6 +8,12 @@ namespace PingisTurnering
         private List<string> _initialPlayerNames = new();
         private List<Round> _rounds = new();
         private List<Player> _players = new();
+
+
+        // Elimination fields
+        private bool _showingElimination = false;
+        private List<EliminationBracket> _eliminationBrackets = new();
+        private Dictionary<Match, (TextBox name1, TextBox name2, TextBox pts1, TextBox pts2)> _eliminationControls = new();
 
         public TabletennisMain()
         {
@@ -24,23 +32,32 @@ namespace PingisTurnering
 
         private void StartTournament()
         {
+            _showingElimination = false;
+            _eliminationBrackets.Clear();
+            _eliminationControls.Clear();
             CreatePlayers();
             CreateStartRound();
             CreateGfx();
         }
-
-        private void CreateGfx()
+        private void ClearGeneratedGfx()
         {
             for (var i = Controls.Count - 1; i >= 0; i--)
             {
                 var c = Controls[i];
                 if (c?.Tag is string s && s == "GeneratedGfx")
-                {
-                    AutoScroll = true;
-                    AutoScrollMinSize = new Size(1920, 1024);
                     Controls.RemoveAt(i);
-                }
             }
+        }
+
+        private void CreateGfx()
+        {
+            if (_showingElimination)
+            {
+                ShowEliminationBrackets(); // If elimination view active, regenerate that instead.
+                return;
+            }
+
+            ClearGeneratedGfx();
 
             if (_rounds.Count == 0) return;
 
@@ -120,15 +137,12 @@ namespace PingisTurnering
 
                     pointsBox.TextChanged += (s, e) =>
                     {
-                        if (s is TextBox tb)
+                        if (s is TextBox tb && int.TryParse(tb.Text, out var val))
                         {
-                            if (int.TryParse(tb.Text, out var val))
-                            {
-                                if (capturedPlayerRow == 0)
-                                    capturedMatch.PointsPlayer1 = val;
-                                else
-                                    capturedMatch.PointsPlayer2 = val;
-                            }
+                            if (capturedPlayerRow == 0)
+                                capturedMatch.PointsPlayer1 = val;
+                            else
+                                capturedMatch.PointsPlayer2 = val;
                         }
                     };
 
@@ -159,11 +173,11 @@ namespace PingisTurnering
             int leaderboardTop = topMargin;
 
             var headerFont = new Font("Segoe UI", 18, FontStyle.Bold);
-            var itemFont = new Font("Segoe UI", 16, FontStyle.Bold);
+            var itemFont = new Font("Segoe UI", 10, FontStyle.Bold);
 
             var headerLabel = new Label
             {
-                Text = "Leaderboard",
+                Text = "Aktuell ställning",
                 Location = new Point(leaderboardX, leaderboardTop),
                 Font = headerFont,
                 AutoSize = true,
@@ -213,7 +227,7 @@ namespace PingisTurnering
 
             var newRoundButton = new Button
             {
-                Text = "New round",
+                Text = "Ny runda",
                 Tag = "GeneratedGfx",
                 Size = new Size(120, 30),
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Right
@@ -231,6 +245,368 @@ namespace PingisTurnering
             };
 
             Controls.Add(newRoundButton);
+
+            var endGameButton = new Button
+            {
+                Text = "Slutspel",
+                Tag = "GeneratedGfx",
+                Size = new Size(120, 30),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Left
+            };
+
+            var endGameButtonX = leftMargin;
+            var endGameButtonY = ClientSize.Height - endGameButton.Height - topMargin;
+            endGameButton.Location = new Point(endGameButtonX, endGameButtonY);
+
+            endGameButton.Click += (s, e) =>
+            {
+                // Implement elimination bracket (slutspel) logic.
+                BuildEliminationPhase();
+                ShowEliminationBrackets();
+            };
+
+            Controls.Add(endGameButton);
+        }
+
+        private void BuildEliminationPhase()
+        {
+            _showingElimination = true;
+            _eliminationBrackets.Clear();
+            _eliminationControls.Clear();
+
+            // Sort players by total points (descending) then name.
+            var ordered = _players
+                .OrderByDescending(p => p.TotalPoints)
+                .ThenBy(p => p.Name)
+                .ToList();
+
+            // Need 16 players (two trees of 8). Pad with BYE if fewer.
+            while (ordered.Count < 16)
+                ordered.Add(new Player("BYE", 0));
+
+            // Split into two groups of 8.
+            var leftGroup = ordered.Take(8).ToList();
+            var rightGroup = ordered.Skip(8).Take(8).ToList();
+
+            var leftBracket = BuildBracket(leftGroup, "A");
+            var rightBracket = BuildBracket(rightGroup, "B");
+
+            AutoAdvanceByes(leftBracket);
+            AutoAdvanceByes(rightBracket);
+
+            _eliminationBrackets.Add(leftBracket);
+            _eliminationBrackets.Add(rightBracket);
+
+            // Perform initial propagation after BYE auto-advances.
+            UpdateEliminationAdvancements(leftBracket);
+            UpdateEliminationAdvancements(rightBracket);
+        }
+
+        private EliminationBracket BuildBracket(List<Player> players, string name)
+        {
+            // Quarterfinals: pair sequential (0-1,2-3,4-5,6-7)
+            var qMatches = new List<Match>();
+            for (int i = 0; i < 8; i += 2)
+                qMatches.Add(new Match(players[i], players[i + 1]));
+
+            // Semifinals placeholders
+            var sMatches = new List<Match>
+            {
+                new Match(new Player("",0), new Player("",0)),
+                new Match(new Player("",0), new Player("",0))
+            };
+
+            // Final placeholder
+            var fMatches = new List<Match>
+            {
+                new Match(new Player("",0), new Player("",0))
+            };
+
+            var rounds = new List<List<Match>> { qMatches, sMatches, fMatches };
+
+            var advancement = new Dictionary<Match, (Match target, int slot)>
+            {
+                { qMatches[0], (sMatches[0], 0) },
+                { qMatches[1], (sMatches[0], 1) },
+                { qMatches[2], (sMatches[1], 0) },
+                { qMatches[3], (sMatches[1], 1) },
+                { sMatches[0], (fMatches[0], 0) },
+                { sMatches[1], (fMatches[0], 1) }
+            };
+
+            return new EliminationBracket(_players, name, rounds, advancement);
+        }
+
+        private void AutoAdvanceByes(EliminationBracket bracket)
+        {
+            foreach (var round in bracket.Rounds)
+            {
+                foreach (var match in round)
+                {
+                    bool p1Bye = match.Player1.Name == "BYE";
+                    bool p2Bye = match.Player2.Name == "BYE";
+                    if (p1Bye ^ p2Bye)
+                    {
+                        if (p1Bye)
+                        {
+                            match.PointsPlayer1 = 0;
+                            match.PointsPlayer2 = 1;
+                        }
+                        else
+                        {
+                            match.PointsPlayer1 = 1;
+                            match.PointsPlayer2 = 0;
+                        }
+                    }
+                }
+            }
+        }
+
+        private void ShowEliminationBrackets()
+        {
+            ClearGeneratedGfx();
+            ClientSize = new Size(1920, 1024);
+
+            var treeWidth = 860;
+            var treeSpacing = 80;//40;
+            var startX = 20;
+            var startY = 20;
+
+            var matchPanelWidth = 240;
+            var matchPanelHeight = 110; //70;
+            var roundHorizontalSpacing = 250; //200;
+            var verticalSpacingQuarter = 70;//30;
+            var verticalSpacingSemi = 140;
+            var verticalSpacingFinal = 300;
+
+            var headerFont = new Font("Segoe UI", 20, FontStyle.Bold);
+            var labelFont = new Font("Segoe UI", 10, FontStyle.Bold);
+            var nameFont = new Font("Segoe UI", 10, FontStyle.Regular);
+
+            for (int bIndex = 0; bIndex < _eliminationBrackets.Count; bIndex++)
+            {
+                var bracket = _eliminationBrackets[bIndex];
+                int baseX = startX + bIndex * (treeWidth + treeSpacing);
+
+                var header = new Label
+                {
+                    Text = $"{bracket.Name} Bracket",
+                    Font = headerFont,
+                    Location = new Point(baseX, startY),
+                    AutoSize = true,
+                    Tag = "GeneratedGfx"
+                };
+                Controls.Add(header);
+
+                // Render rounds: 0=Quarter(4), 1=Semi(2), 2=Final(1)
+                for (int r = 0; r < bracket.Rounds.Count; r++)
+                {
+                    var roundMatches = bracket.Rounds[r];
+                    int roundX = baseX + r * roundHorizontalSpacing;
+                    int roundY;
+                    int spacing;
+
+                    if (r == 0)
+                    {
+                        roundY = startY + 60;
+                        spacing = verticalSpacingQuarter;
+                    }
+                    else if (r == 1)
+                    {
+                        roundY = startY + 60 + (matchPanelHeight + verticalSpacingQuarter) - 10;
+                        spacing = verticalSpacingSemi;
+                    }
+                    else
+                    {
+                        roundY = startY + 60 + (matchPanelHeight + verticalSpacingQuarter) + verticalSpacingSemi - 40;
+                        spacing = verticalSpacingFinal;
+                    }
+
+                    for (int m = 0; m < roundMatches.Count; m++)
+                    {
+                        var match = roundMatches[m];
+                        int panelY;
+
+                        if (r == 0)
+                        {
+                            panelY = roundY + m * (matchPanelHeight + spacing);
+                        }
+                        else if (r == 1)
+                        {
+                            // Position semis roughly between their source quarter matches
+                            if (m == 0)
+                                panelY = startY + 60 + (matchPanelHeight / 2);
+                            else
+                                panelY = startY + 60 + (matchPanelHeight / 2) + (matchPanelHeight + verticalSpacingQuarter) * 2;
+                        }
+                        else
+                        {
+                            // Final center
+                            panelY = startY + 60 + (matchPanelHeight + verticalSpacingQuarter) + (matchPanelHeight / 2) + verticalSpacingSemi / 2;
+                        }
+
+                        var panel = new Panel
+                        {
+                            Location = new Point(roundX, panelY),
+                            Size = new Size(matchPanelWidth, matchPanelHeight),
+                            BorderStyle = BorderStyle.FixedSingle,
+                            Tag = "GeneratedGfx"
+                        };
+
+                        // Two rows for players
+                        for (int pr = 0; pr < 2; pr++)
+                        {
+                            int rowY = 6 + pr * 28;
+
+                            var nameBox = new TextBox
+                            {
+                                Location = new Point(6, rowY),
+                                Size = new Size(matchPanelWidth - 80, 22),
+                                Tag = "GeneratedGfx",
+                                Font = nameFont,
+                                Text = pr == 0 ? (match.Player1?.Name ?? "") : (match.Player2?.Name ?? "")
+                            };
+
+                            // No manual name editing for elimination propagation (lock names after assigned)
+                            nameBox.ReadOnly = true;
+
+                            var ptsBox = new TextBox
+                            {
+                                Location = new Point(matchPanelWidth - 66, rowY),
+                                Size = new Size(54, 22),
+                                Tag = "GeneratedGfx",
+                                TextAlign = HorizontalAlignment.Center,
+                                Font = nameFont,
+                                Text = pr == 0 ? match.PointsPlayer1.ToString() : match.PointsPlayer2.ToString()
+                            };
+
+                            var capturedMatch = match;
+                            var capturedRow = pr;
+
+                            ptsBox.TextChanged += (s, e) =>
+                            {
+                                if (s is TextBox tb && int.TryParse(tb.Text, out var val))
+                                {
+                                    if (capturedRow == 0)
+                                        capturedMatch.PointsPlayer1 = val;
+                                    else
+                                        capturedMatch.PointsPlayer2 = val;
+
+                                    // Update advancements for this bracket
+                                    UpdateEliminationAdvancements(bracket);
+                                }
+                            };
+
+                            panel.Controls.Add(nameBox);
+                            panel.Controls.Add(ptsBox);
+
+                            // Store references for later UI updates
+                            if (!_eliminationControls.ContainsKey(match))
+                            {
+                                _eliminationControls[match] = (null!, null!, null!, null!);
+                            }
+
+                            var tuple = _eliminationControls[match];
+                            if (pr == 0)
+                            {
+                                tuple.name1 = nameBox;
+                                tuple.pts1 = ptsBox;
+                            }
+                            else
+                            {
+                                tuple.name2 = nameBox;
+                                tuple.pts2 = ptsBox;
+                            }
+                            _eliminationControls[match] = tuple;
+                        }
+
+                        var label = new Label
+                        {
+                            AutoSize = true,
+                            Font = labelFont,
+                            Tag = "GeneratedGfx",
+                            Location = new Point(6, matchPanelHeight - 28), //18),
+                            Text = r switch
+                            {
+                                0 => $"QF {m + 1}",
+                                1 => $"SF {m + 1}",
+                                2 => "Final",
+                                _ => "Match"
+                            }
+                        };
+                        panel.Controls.Add(label);
+                        Controls.Add(panel);
+                    }
+                }
+            }
+
+            // Button to return to round-robin view (optional)
+            var backButton = new Button
+            {
+                Text = "Tillbaka",
+                Size = new Size(100, 30),
+                Location = new Point(ClientSize.Width - 120, ClientSize.Height - 50),
+                Tag = "GeneratedGfx"
+            };
+            backButton.Click += (s, e) =>
+            {
+                _showingElimination = false;
+                CreateGfx();
+            };
+            Controls.Add(backButton);
+        }
+
+        private void UpdateEliminationAdvancements(EliminationBracket bracket)
+        {
+            // Propagate winners through advancement map
+            foreach (var kvp in bracket.AdvancementMap)
+            {
+                var src = kvp.Key;
+                var (target, slot) = kvp.Value;
+
+                var winner = GetMatchWinnerConsideringByes(src);
+                if (winner == null) continue;
+
+                if (slot == 0)
+                    target.Player1 = winner;
+                else
+                    target.Player2 = winner;
+
+                // Update UI text boxes for target match if available
+                if (_eliminationControls.TryGetValue(target, out var tuple))
+                {
+                    if (tuple.name1 != null)
+                        tuple.name1.Text = target.Player1?.Name ?? "";
+                    if (tuple.name2 != null)
+                        tuple.name2.Text = target.Player2?.Name ?? "";
+                }
+            }
+
+            // Refresh points text boxes (in case of changes)
+            foreach (var kvp in _eliminationControls)
+            {
+                var match = kvp.Key;
+                var (n1, n2, p1, p2) = kvp.Value;
+                if (n1 != null) n1.Text = match.Player1?.Name ?? "";
+                if (n2 != null) n2.Text = match.Player2?.Name ?? "";
+                if (p1 != null) p1.Text = match.PointsPlayer1.ToString();
+                if (p2 != null) p2.Text = match.PointsPlayer2.ToString();
+            }
+        }
+
+        private Player? GetMatchWinnerConsideringByes(Match match)
+        {
+            bool p1Bye = match.Player1?.Name == "BYE";
+            bool p2Bye = match.Player2?.Name == "BYE";
+
+            if (p1Bye && !p2Bye) return match.Player2;
+            if (p2Bye && !p1Bye) return match.Player1;
+
+            if (match.Player1 == null || match.Player2 == null) return null;
+
+            if (match.PointsPlayer1 == match.PointsPlayer2) return null; // tie -> cannot decide yet
+
+            return match.GetWinner();
         }
 
         private void CreateNextRound()
@@ -426,129 +802,24 @@ namespace PingisTurnering
         public List<Match> Matches { get; set; }
         public Round(List<Match> matches) => Matches = matches;
     }
-    // Simple runtime-built form to configure number of players and provide a list of names (one per line).
-    public class PlayerSetupForm : Form
+
+    public class EliminationBracket
     {
-        private readonly NumericUpDown _nudPlayers;
-        private readonly TextBox _txtNames;
-        private readonly Button _btnOk;
-        private readonly Button _btnCancel;
+        public string Name { get; }
+        public List<Player> Players { get; } = new();
+        public List<List<Match>> Rounds { get; }
+        public Dictionary<Match, (Match target, int slot)> AdvancementMap { get; }
 
-        public int NumberOfPlayers { get; private set; }
-        public List<string> PlayerNames { get; private set; } = new();
-
-        public PlayerSetupForm(int initialNumberOfPlayers = 14, IEnumerable<string>? initialNames = null)
+        public EliminationBracket(
+            List<Player> players,
+            string name,
+            List<List<Match>> rounds,
+            Dictionary<Match, (Match target, int slot)> advancement)
         {
-            Text = "Player Setup";
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            StartPosition = FormStartPosition.CenterParent;
-            ClientSize = new Size(480, 420);
-            MaximizeBox = false;
-            MinimizeBox = false;
-            ShowInTaskbar = false;
-
-            var lblCount = new Label
-            {
-                Text = "Number of players:",
-                Location = new Point(12, 14),
-                AutoSize = true
-            };
-            Controls.Add(lblCount);
-
-            _nudPlayers = new NumericUpDown
-            {
-                Location = new Point(150, 10),
-                Size = new Size(80, 24),
-                Minimum = 2,
-                Maximum = 256,
-                Value = Math.Max(2, Math.Min(256, initialNumberOfPlayers))
-            };
-            Controls.Add(_nudPlayers);
-
-            var lblNames = new Label
-            {
-                Text = "Player names (one per line):",
-                Location = new Point(12, 48),
-                AutoSize = true
-            };
-            Controls.Add(lblNames);
-
-            _txtNames = new TextBox
-            {
-                Location = new Point(12, 72),
-                Size = new Size(ClientSize.Width - 24, 280),
-                Multiline = true,
-                ScrollBars = ScrollBars.Vertical,
-                AcceptsReturn = true,
-                WordWrap = false
-            };
-            Controls.Add(_txtNames);
-
-            if (initialNames != null)
-                _txtNames.Lines = initialNames.ToArray();
-            else
-            {
-                var lines = new List<string>();
-                for (var i = 0; i < initialNumberOfPlayers; i++)
-                    lines.Add((i + 1).ToString());
-                _txtNames.Lines = lines.ToArray();
-            }
-
-            _btnOk = new Button
-            {
-                Text = "OK",
-                // IMPORTANT: Do NOT set DialogResult here to allow validation to keep form open.
-                Size = new Size(100, 30),
-                Location = new Point(ClientSize.Width - 220, ClientSize.Height - 44)
-            };
-            _btnOk.Click += BtnOk_Click;
-            Controls.Add(_btnOk);
-
-            _btnCancel = new Button
-            {
-                Text = "Cancel",
-                DialogResult = DialogResult.Cancel,
-                Size = new Size(100, 30),
-                Location = new Point(ClientSize.Width - 110, ClientSize.Height - 44)
-            };
-            Controls.Add(_btnCancel);
-
-            AcceptButton = _btnOk;
-            CancelButton = _btnCancel;
-        }
-
-        private void BtnOk_Click(object? sender, EventArgs e)
-        {
-            var rawLines = _txtNames.Lines ?? Array.Empty<string>();
-            var names = rawLines
-                .Select(l => l?.Trim() ?? string.Empty)
-                .Where(s => !string.IsNullOrEmpty(s))
-                .ToList();
-
-            var requestedPlayers = (int)_nudPlayers.Value;
-
-            if (names.Count != requestedPlayers)
-            {
-                // Ensure the form does NOT close after validation failure.
-                _btnOk.DialogResult = DialogResult.None;
-                this.DialogResult = DialogResult.None;
-
-                MessageBox.Show(
-                    this,
-                    $"The number of names entered ({names.Count}) must match the number of players ({requestedPlayers}).\nAdjust the player count or the list of names before continuing.",
-                    "Invalid player configuration",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error
-                );
-                return;
-            }
-
-            NumberOfPlayers = requestedPlayers;
-            PlayerNames = names;
-
-            // Set DialogResult only on success to close the form.
-            this.DialogResult = DialogResult.OK;
-            Close();
+            Name = name;
+            Rounds = rounds;
+            AdvancementMap = advancement;
+            Players = players;
         }
     }
 }
