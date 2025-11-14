@@ -49,11 +49,19 @@ namespace PingisTurnering
             }
         }
 
+        // Pseudocode:
+        // In CreateGfx leaderboard loop:
+        // - While iterating sorted players, detect index 16 (17th player, zero-based).
+        // - Before rendering that player's labels, insert a horizontal separator line control.
+        // - Only add the separator if there are more than 16 players (otherwise no line needed).
+        // - Separator: Panel (or Label) with small height, full leaderboard width, dark gray color, tagged as GeneratedGfx.
+        // - Position: same X as leaderboard, Y just above the 17th player's row (use y - 4 for slight spacing).
+
         private void CreateGfx()
         {
             if (_showingElimination)
             {
-                ShowEliminationBrackets(); // If elimination view active, regenerate that instead.
+                ShowEliminationBrackets();
                 return;
             }
 
@@ -194,11 +202,26 @@ namespace PingisTurnering
             var nameColumnWidth = leaderboardWidth - 80;
             var pointsColumnWidth = 70;
             int leaderboardRowSpacing = rowHeight + 9;
+            bool separatorAdded = false;
 
             for (var i = 0; i < sorted.Count; i++)
             {
                 var p = sorted[i];
                 var y = itemsTop + i * leaderboardRowSpacing;
+
+                // Insert horizontal separator before player in position 17 (index 16).
+                if (!separatorAdded && i == 16)
+                {
+                    var sep = new Panel
+                    {
+                        Location = new Point(leaderboardX, y - 4),
+                        Size = new Size(leaderboardWidth, 2),
+                        BackColor = Color.DarkGray,
+                        Tag = "GeneratedGfx"
+                    };
+                    Controls.Add(sep);
+                    separatorAdded = true;
+                }
 
                 var nameLabel = new Label
                 {
@@ -260,7 +283,6 @@ namespace PingisTurnering
 
             endGameButton.Click += (s, e) =>
             {
-                // Implement elimination bracket (slutspel) logic.
                 BuildEliminationPhase();
                 ShowEliminationBrackets();
             };
