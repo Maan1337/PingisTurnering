@@ -185,7 +185,7 @@ namespace PingisTurnering
 
             var headerLabel = new Label
             {
-                Text = "Aktuell ställning",
+                Text = "Aktuell stï¿½llning",
                 Location = new Point(leaderboardX, leaderboardTop),
                 Font = headerFont,
                 AutoSize = true,
@@ -646,10 +646,20 @@ namespace PingisTurnering
             }
 
             var participants = new List<Player>(_players);
+            var rnd = new Random();
+            Match? byeMatch = null;
             if (participants.Count % 2 == 1)
-                participants.Add(new Player("BYE", 0));
+            {
+                var eligible = participants.Where(p => !p.HadBye).ToList();
+                var pool = eligible.Count > 0 ? eligible : participants;
+                var byeRecipient = pool[rnd.Next(pool.Count)];
+                participants.Remove(byeRecipient);
+                byeRecipient.HadBye = true;
+                byeMatch = new Match(byeRecipient, new Player("BYE", 0));
+            }
 
             var playedPairs = new HashSet<string>();
+            var playedCounts = new Dictionary<string, int>();
             foreach (var round in _rounds)
             {
                 foreach (var m in round.Matches)
@@ -659,76 +669,65 @@ namespace PingisTurnering
                     var b = m.Player2.Id;
                     var key = a < b ? $"{a}:{b}" : $"{b}:{a}";
                     playedPairs.Add(key);
+                    if (!playedCounts.ContainsKey(key))
+                        playedCounts[key] = 0;
+                    playedCounts[key]++;
                 }
             }
 
-            bool TryGeneratePairings(List<Player> list, HashSet<string> played, out List<Match> result)
+            bool TryGeneratePairings(List<Player> list, out List<Match> result)
             {
                 result = null!;
-                var rnd = new Random();
-                const int maxAttempts = 1000;
+                var remaining = new List<Player>(list);
+                var matches = new List<Match>();
 
-                for (var attempt = 0; attempt < maxAttempts; attempt++)
+                while (remaining.Count > 1)
                 {
-                    for (var i = list.Count - 1; i > 0; i--)
+                    var p1Index = rnd.Next(remaining.Count);
+                    var p1 = remaining[p1Index];
+                    remaining.RemoveAt(p1Index);
+
+                    var bestCount = int.MaxValue;
+                    var candidates = new List<Player>();
+
+                    foreach (var candidate in remaining)
                     {
-                        var j = rnd.Next(i + 1);
-                        (list[i], list[j]) = (list[j], list[i]);
-                    }
-
-                    var ok = true;
-                    var matches = new List<Match>();
-
-                    for (var i = 0; i < list.Count; i += 2)
-                    {
-                        var p1 = list[i];
-                        var p2 = list[i + 1];
-                        var key = p1.Id < p2.Id ? $"{p1.Id}:{p2.Id}" : $"{p2.Id}:{p1.Id}";
-
-                        if (!played.Contains(key))
+                        var key = p1.Id < candidate.Id ? $"{p1.Id}:{candidate.Id}" : $"{candidate.Id}:{p1.Id}";
+                        var count = playedCounts.TryGetValue(key, out var c) ? c : 0;
+                        if (count < bestCount)
                         {
-                            matches.Add(new Match(p1, p2));
-                            continue;
+                            bestCount = count;
+                            candidates.Clear();
+                            candidates.Add(candidate);
                         }
-
-                        var found = false;
-                        for (var k = i + 2; k < list.Count; k++)
+                        else if (count == bestCount)
                         {
-                            var candidate = list[k];
-                            var candidateKey = p1.Id < candidate.Id ? $"{p1.Id}:{candidate.Id}" : $"{candidate.Id}:{p1.Id}";
-                            if (!played.Contains(candidateKey))
-                            {
-                                (list[i + 1], list[k]) = (list[k], list[i + 1]);
-                                matches.Add(new Match(p1, list[i + 1]));
-                                found = true;
-                                break;
-                            }
-                        }
-
-                        if (!found)
-                        {
-                            ok = false;
-                            break;
+                            candidates.Add(candidate);
                         }
                     }
 
-                    if (ok)
-                    {
-                        result = matches;
-                        return true;
-                    }
+                    if (candidates.Count == 0)
+                        return false;
+
+                    var p2 = candidates[rnd.Next(candidates.Count)];
+                    remaining.Remove(p2);
+                    matches.Add(new Match(p1, p2));
                 }
 
-                return false;
+                result = matches;
+                return true;
             }
 
             var working = new List<Player>(participants);
-            if (!TryGeneratePairings(working, playedPairs, out var nextMatches))
+            if (!TryGeneratePairings(working, out var nextMatches))
             {
                 nextMatches = new List<Match>();
                 for (var i = 0; i < participants.Count; i += 2)
                     nextMatches.Add(new Match(participants[i], participants[i + 1]));
             }
+
+            if (byeMatch != null)
+                nextMatches.Add(byeMatch);
 
             var nextRound = new Round(nextMatches);
             _rounds.Insert(0, nextRound);
@@ -738,14 +737,27 @@ namespace PingisTurnering
         {
             var players = new List<Player>(_players);
             var rnd = new Random();
+            Player? byeRecipient = null;
+            if (players.Count % 2 == 1)
+            {
+                var eligible = players.Where(p => !p.HadBye).ToList();
+                var pool = eligible.Count > 0 ? eligible : players;
+                byeRecipient = pool[rnd.Next(pool.Count)];
+                players.Remove(byeRecipient);
+            }
+
             for (var i = players.Count - 1; i > 0; i--)
             {
                 var j = rnd.Next(i + 1);
                 (players[i], players[j]) = (players[j], players[i]);
             }
 
-            if (players.Count % 2 == 1)
+            if (byeRecipient != null)
+            {
+                byeRecipient.HadBye = true;
+                players.Add(byeRecipient);
                 players.Add(new Player("BYE", 0));
+            }
 
             var matches = new List<Match>();
             for (var i = 0; i < players.Count; i += 2)
@@ -787,6 +799,7 @@ namespace PingisTurnering
         public string Name { get; set; }
         public int Rating { get; set; }
         public int TotalPoints { get; set; }
+        public bool HadBye { get; set; }
 
         public Player(string name, int rating)
         {
