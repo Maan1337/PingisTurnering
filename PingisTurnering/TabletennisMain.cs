@@ -1,4 +1,7 @@
 using static PingisTurnering.TabletennisMain;
+using PingisTurnering.Data;
+using Microsoft.EntityFrameworkCore;
+using PingisTurnering.Web;
 
 namespace PingisTurnering
 {
@@ -14,6 +17,7 @@ namespace PingisTurnering
         private bool _showingElimination = false;
         private List<EliminationBracket> _eliminationBrackets = new();
         private Dictionary<Match, (TextBox name1, TextBox name2, TextBox pts1, TextBox pts2)> _eliminationControls = new();
+        private Dictionary<Match, (TextBox name1, TextBox name2, TextBox pts1, TextBox pts2)> _roundControls = new();
 
         public TabletennisMain()
         {
@@ -21,13 +25,88 @@ namespace PingisTurnering
 
             using var setup = new PlayerSetupForm(_noOfPlayers, _initialPlayerNames);
             var dr = setup.ShowDialog(this);
-            if (dr == DialogResult.OK)
+            var setupAccepted = dr == DialogResult.OK;
+            if (setupAccepted)
             {
                 _noOfPlayers = setup.NumberOfPlayers;
                 _initialPlayerNames = new List<string>((IEnumerable<string>)setup.PlayerNames ?? Array.Empty<string>());
             }
 
+            // Ensure database and migrations
+            using (var db = new TournamentContext())
+            {
+                db.Database.EnsureCreated();
+                // Auto-load players if any
+                var saved = db.Players.OrderBy(p => p.Id).ToList();
+                if (!setupAccepted && saved.Count > 0)
+                {
+                    _players = saved;
+                    _noOfPlayers = _players.Count;
+                }
+            }
             StartTournament();
+            // Start lightweight web broadcaster on localhost
+            try
+            {
+                var prefix = "http://localhost:5000/";
+                _ = new WebSocketServerSingleton(prefix);
+            }
+            catch
+            {
+                // ignore if port in use
+            }
+        }
+
+        private void CommitPointsFromTextBox(TextBox tb, Match match, int playerIndex)
+        {
+            if (tb == null || match == null) return;
+            var txt = (tb.Text ?? string.Empty).Trim();
+            if (!int.TryParse(txt, out var val))
+            {
+                val = 0;
+            }
+
+            if (playerIndex == 0)
+                match.PointsPlayer1 = val;
+            else
+                match.PointsPlayer2 = val;
+
+            // Normalize textbox text to a valid integer representation
+            var normalized = val.ToString();
+            if (tb.Text != normalized)
+                tb.Text = normalized;
+
+            // Persist and notify
+            // Persist to DB: update player's totals now as points affect totals only when creating next round.
+            try
+            {
+                // Update player totals snapshot immediately so leaderboard updates reflect edits.
+                if (match.Player1 != null && match.Player2 != null)
+                {
+                    using var db = new TournamentContext();
+                    // Ensure players exist in DB by Id; if not, add them preserving Ids
+                    foreach (var p in new[] { match.Player1, match.Player2 })
+                    {
+                        var existing = db.Players.SingleOrDefault(x => x.Id == p.Id);
+                        if (existing == null)
+                        {
+                            // Attach as new
+                            db.Players.Add(new Player { Id = p.Id, Name = p.Name, Rating = p.Rating, TotalPoints = p.TotalPoints });
+                        }
+                        else
+                        {
+                            existing.Name = p.Name;
+                            existing.Rating = p.Rating;
+                            existing.TotalPoints = p.TotalPoints;
+                        }
+                    }
+                    db.SaveChanges();
+                }
+            }
+            catch { }
+
+            SaveState();
+            WebSocketServerSingleton.Instance?.NotifyMatchUpdated(match);
         }
 
         private void StartTournament()
@@ -38,6 +117,28 @@ namespace PingisTurnering
             CreatePlayers();
             CreateStartRound();
             CreateGfx();
+            // Auto-save initial state
+            SaveState();
+        }
+
+        private void SaveState()
+        {
+            try
+            {
+                using var db = new TournamentContext();
+
+                // Replace players table contents for simplicity
+                var existing = db.Players.ToList();
+                db.Players.RemoveRange(existing);
+                db.SaveChanges();
+
+                db.Players.AddRange(_players);
+                db.SaveChanges();
+            }
+            catch
+            {
+                // ignore save errors for now
+            }
         }
         private void ClearGeneratedGfx()
         {
@@ -47,6 +148,7 @@ namespace PingisTurnering
                 if (c?.Tag is string s && s == "GeneratedGfx")
                     Controls.RemoveAt(i);
             }
+            _roundControls.Clear();
         }
 
         // Pseudocode:
@@ -143,16 +245,56 @@ namespace PingisTurnering
                         TextAlign = HorizontalAlignment.Center
                     };
 
+
                     pointsBox.TextChanged += (s, e) =>
                     {
-                        if (s is TextBox tb && int.TryParse(tb.Text, out var val))
+                        // Update in-memory immediately on change and highlight the panel
+                        if (s is TextBox tb)
                         {
-                            if (capturedPlayerRow == 0)
-                                capturedMatch.PointsPlayer1 = val;
-                            else
-                                capturedMatch.PointsPlayer2 = val;
+                            if (int.TryParse(tb.Text, out var val))
+                            {
+                                if (capturedPlayerRow == 0)
+                                    capturedMatch.PointsPlayer1 = val;
+                                else
+                                    capturedMatch.PointsPlayer2 = val;
+                            }
+                            try { panel.BackColor = Color.LightYellow; } catch { }
                         }
                     };
+
+                    // Commit when focus lost to ensure totals are updated
+                    pointsBox.LostFocus += (s, e) =>
+                    {
+                        if (s is TextBox tb)
+                        {
+                            CommitPointsFromTextBox(tb, capturedMatch, capturedPlayerRow);
+                            try { panel.BackColor = SystemColors.Control; } catch { }
+                        }
+                    };
+
+                    // Also commit when Enter pressed
+                    pointsBox.KeyDown += (s, e) =>
+                    {
+                        if (e.KeyCode == Keys.Enter && s is TextBox tb)
+                        {
+                            CommitPointsFromTextBox(tb, capturedMatch, capturedPlayerRow);
+                            try { panel.BackColor = SystemColors.Control; } catch { }
+                            e.Handled = true;
+                            e.SuppressKeyPress = true;
+                        }
+                    };
+
+                    // Track for batch updates/clear - merge with existing tuple if present
+                    if (!_roundControls.ContainsKey(capturedMatch))
+                    {
+                        _roundControls[capturedMatch] = (null, null, null, null);
+                    }
+                    var existingTuple = _roundControls[capturedMatch];
+                    if (capturedPlayerRow == 0)
+                        existingTuple.pts1 = pointsBox;
+                    else
+                        existingTuple.pts2 = pointsBox;
+                    _roundControls[capturedMatch] = existingTuple;
 
                     panel.Controls.Add(nameBox);
                     panel.Controls.Add(pointsBox);
@@ -306,9 +448,14 @@ namespace PingisTurnering
             while (ordered.Count < 16)
                 ordered.Add(new Player("BYE", 0));
 
+            // Arrange standard 16-player seed positions so the highest seeds meet
+            // the lowest seeds in the quarterfinals and remain separated in the bracket.
+            var seedPositions = new[] { 0, 15, 7, 8, 3, 12, 4, 11, 1, 14, 6, 9, 2, 13, 5, 10 };
+            var seeded = seedPositions.Select(index => ordered[index]).ToList();
+
             // Split into two groups of 8.
-            var leftGroup = ordered.Take(8).ToList();
-            var rightGroup = ordered.Skip(8).Take(8).ToList();
+            var leftGroup = seeded.Take(8).ToList();
+            var rightGroup = seeded.Skip(8).Take(8).ToList();
 
             var leftBracket = BuildBracket(leftGroup, "A");
             var rightBracket = BuildBracket(rightGroup, "B");
@@ -783,14 +930,19 @@ namespace PingisTurnering
     public class Player
     {
         private static int _nextId = 0;
-        public int Id { get; }
+        // Make Id settable so EF Core can hydrate entities. When created locally we assign a unique id.
+        public int Id { get; set; }
         public string Name { get; set; }
         public int Rating { get; set; }
         public int TotalPoints { get; set; }
 
+        // Parameterless ctor for EF
+        public Player() { }
+
         public Player(string name, int rating)
         {
-            Id = System.Threading.Interlocked.Increment(ref _nextId);
+            if (Id == 0)
+                Id = System.Threading.Interlocked.Increment(ref _nextId);
             Name = name;
             Rating = rating;
             TotalPoints = 0;
@@ -799,12 +951,14 @@ namespace PingisTurnering
 
     public class Match
     {
+        public int Id { get; set; }
         public Player Player1 { get; set; }
         public Player Player2 { get; set; }
 
         public int PointsPlayer1 { get; set; }
 
         public int PointsPlayer2 { get; set; }
+        public Match() { }
         public Match(Player player1, Player player2)
         {
             Player1 = player1;

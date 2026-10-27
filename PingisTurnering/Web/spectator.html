@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Pingis Spectator</title>
+  <style>body{font-family:Segoe UI,Arial;margin:20px} .match{border:1px solid #ccc;padding:8px;margin:6px}</style>
+  <script>
+    let ws;
+    function init(){
+      ws = new WebSocket(location.href.replace(/^http/, 'ws'));
+      ws.onmessage = (e)=>{
+        try{ const m = JSON.parse(e.data); renderMatch(m); }catch{}
+      };
+    }
+    function renderMatch(m){
+      const id = m.Id ?? 'match';
+      let el = document.getElementById('m'+id);
+      if(!el){ el = document.createElement('div'); el.id='m'+id; el.className='match'; document.body.appendChild(el); }
+      el.innerText = `${m.Player1?.Name ?? '---'} ${m.PointsPlayer1 ?? 0} - ${m.PointsPlayer2 ?? 0} ${m.Player2?.Name ?? '---'}`;
+    }
+    window.onload = init;
+  </script>
+</head>
+<body>
+  <h1>Pingis Spectator</h1>
+  <div id="matches"></div>
+</body>
+</html>
