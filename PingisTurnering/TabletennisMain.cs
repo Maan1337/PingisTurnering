@@ -444,18 +444,23 @@ namespace PingisTurnering
                 .ThenBy(p => p.Name)
                 .ToList();
 
-            // Need 16 players (two trees of 8). Pad with BYE if fewer.
-            while (ordered.Count < 16)
-                ordered.Add(new Player("BYE", 0));
+            // Split the standings between the brackets, giving A the extra player when odd.
+            var aPlayerCount = (ordered.Count + 1) / 2;
+            var aPlayers = ordered.Take(aPlayerCount).ToList();
+            var bPlayers = ordered.Skip(aPlayerCount).ToList();
 
-            // Arrange standard 16-player seed positions so the highest seeds meet
-            // the lowest seeds in the quarterfinals and remain separated in the bracket.
-            var seedPositions = new[] { 0, 15, 7, 8, 3, 12, 4, 11, 1, 14, 6, 9, 2, 13, 5, 10 };
-            var seeded = seedPositions.Select(index => ordered[index]).ToList();
+            List<Player> SeedGroup(List<Player> group)
+            {
+                while (group.Count < 8)
+                    group.Add(new Player("BYE", 0));
 
-            // Split into two groups of 8.
-            var leftGroup = seeded.Take(8).ToList();
-            var rightGroup = seeded.Skip(8).Take(8).ToList();
+                // Separate the top seeds so they cannot meet before the final.
+                var seedPositions = new[] { 0, 7, 3, 4, 1, 6, 2, 5 };
+                return seedPositions.Select(index => group[index]).ToList();
+            }
+
+            var leftGroup = SeedGroup(aPlayers);
+            var rightGroup = SeedGroup(bPlayers);
 
             var leftBracket = BuildBracket(leftGroup, "A");
             var rightBracket = BuildBracket(rightGroup, "B");
@@ -793,15 +798,37 @@ namespace PingisTurnering
             }
 
             var participants = new List<Player>(_players);
+            Player? byePlayer = null;
             if (participants.Count % 2 == 1)
-                participants.Add(new Player("BYE", 0));
+            {
+                var byeCounts = _players.ToDictionary(player => player.Id, _ => 0);
+                foreach (var round in _rounds)
+                {
+                    foreach (var match in round.Matches)
+                    {
+                        var player1IsBye = match.Player1?.Name == "BYE";
+                        var player2IsBye = match.Player2?.Name == "BYE";
+                        if (player1IsBye == player2IsBye) continue;
+
+                        var playerWhoHadBye = player1IsBye ? match.Player2 : match.Player1;
+                        if (playerWhoHadBye != null && byeCounts.TryGetValue(playerWhoHadBye.Id, out var count))
+                            byeCounts[playerWhoHadBye.Id] = count + 1;
+                    }
+                }
+
+                var fewestByes = participants.Min(player => byeCounts[player.Id]);
+                var eligiblePlayers = participants.Where(player => byeCounts[player.Id] == fewestByes).ToList();
+                byePlayer = eligiblePlayers[Random.Shared.Next(eligiblePlayers.Count)];
+                participants.Remove(byePlayer);
+            }
 
             var playedPairs = new HashSet<string>();
             foreach (var round in _rounds)
             {
                 foreach (var m in round.Matches)
                 {
-                    if (m.Player1 == null || m.Player2 == null) continue;
+                    if (m.Player1 == null || m.Player2 == null ||
+                        m.Player1.Name == "BYE" || m.Player2.Name == "BYE") continue;
                     var a = m.Player1.Id;
                     var b = m.Player2.Id;
                     var key = a < b ? $"{a}:{b}" : $"{b}:{a}";
@@ -876,6 +903,9 @@ namespace PingisTurnering
                 for (var i = 0; i < participants.Count; i += 2)
                     nextMatches.Add(new Match(participants[i], participants[i + 1]));
             }
+
+            if (byePlayer != null)
+                nextMatches.Add(new Match(byePlayer, new Player("BYE", 0)));
 
             var nextRound = new Round(nextMatches);
             _rounds.Insert(0, nextRound);
